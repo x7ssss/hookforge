@@ -1,0 +1,35 @@
+{
+  "name": "hookforge",
+  "version": "0.1.0",
+  "description": "Provider-accurate webhook traffic on your laptop. Zero tunnels, zero accounts.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "hookforge": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "dev": "tsup --watch"
+  },
+  "keywords": [
+    "webhooks",
+    "testing",
+    "stripe",
+    "github",
+    "hmac",
+    "cli"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^2.0.0"
+  }
+}
