@@ -1,8 +1,8 @@
 # hookforge
 
-[![CI](https://github.com/hookforge/hookforge/actions/workflows/ci.yml/badge.svg)](https://github.com/hookforge/hookforge/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/hookforge.svg?style=flat-square)](https://www.npmjs.com/package/hookforge)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg?style=flat-square)](https://www.npmjs.com/package/hookforge)
+[![CI](https://github.com/x7ssss/hookforge/actions/workflows/ci.yml/badge.svg)](https://github.com/x7ssss/hookforge/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/hookforge-cli.svg?style=flat-square)](https://www.npmjs.com/package/hookforge-cli)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg?style=flat-square)](https://www.npmjs.com/package/hookforge-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 > **Provider-accurate webhook traffic on your laptop. Zero tunnels, zero accounts, 0 outbound network requests.**
@@ -21,25 +21,51 @@ Testing webhook handlers in local development is traditionally painful and fragi
 
 ---
 
-## Quickstart (CLI)
+## Installation & Quickstart
 
-No installation required. Fire authentic, cryptographically signed webhook payloads at your local server using `npx`:
+### 1. Direct Runner (No Installation Required)
+
+Fire authentic, cryptographically signed webhook payloads at your local server using `npx`:
 
 ```bash
 # Send a valid Stripe payment_intent.succeeded event
-npx hookforge stripe payment_intent.succeeded --to localhost:3000/api/webhooks
+npx hookforge-cli stripe payment_intent.succeeded --to localhost:3000/api/webhooks
 
 # Tamper 1 byte in the body to verify your signature rejection logic (returns 400/401)
-npx hookforge standard user.created --to localhost:3000/api/webhooks --tamper
+npx hookforge-cli standard user.created --to localhost:3000/api/webhooks --tamper
 
 # Replay an event with identical timestamp and signature to test idempotency
-npx hookforge github push --to localhost:3000/api/webhooks --replay
+npx hookforge-cli github push --to localhost:3000/api/webhooks --replay
 ```
+
+### 2. Global Installation
+
+Install globally to use the convenient `hookforge` alias directly anywhere in your terminal:
+
+```bash
+npm install -g hookforge-cli
+```
+
+> **Binary Invocation:** Both `npx hookforge-cli` and the global alias command `hookforge` (as well as `hookforge-cli`) invoke the underlying binary identically.
+
+```bash
+# Using the hookforge alias
+hookforge stripe payment_intent.succeeded --to localhost:3000/api/webhooks
+
+# Using the full hookforge-cli command
+hookforge-cli stripe payment_intent.succeeded --to localhost:3000/api/webhooks
+```
+
+---
 
 ### CLI Options
 
+Both `hookforge` and `hookforge-cli` accept identical syntax and options:
+
 ```text
 hookforge <provider> <event> --to <target_url> [options]
+# or
+npx hookforge-cli <provider> <event> --to <target_url> [options]
 
 ARGUMENTS:
   <provider>            Provider name (stripe | github | standard)
@@ -60,10 +86,10 @@ OPTIONS:
 
 ## Programmatic API
 
-Install `hookforge` as a development dependency:
+Install `hookforge-cli` as a development dependency:
 
 ```bash
-npm install --save-dev hookforge
+npm install --save-dev hookforge-cli
 ```
 
 ### 1. `sign(provider, options)`
@@ -71,7 +97,7 @@ npm install --save-dev hookforge
 A pure function that constructs provider-compliant headers and returns the payload strictly as a `Buffer` to guarantee byte integrity.
 
 ```typescript
-import { sign } from 'hookforge';
+import { sign } from 'hookforge-cli';
 
 // Sign with realistic default fixtures
 const payload = sign('stripe', {
@@ -90,7 +116,7 @@ console.log(payload.rawBody);
 A lightweight wrapper around native `fetch` that POSTs the raw `Buffer` with an explicit `Content-Length` header without modifying bytes or encodings:
 
 ```typescript
-import { sign, send } from 'hookforge';
+import { sign, send } from 'hookforge-cli';
 
 const signed = sign('stripe');
 
@@ -104,7 +130,7 @@ console.log(res.status); // 200
 Simulate production edge cases, replay attacks, and network tampering in your automated integration tests:
 
 ```typescript
-import { sign, send, chaos } from 'hookforge';
+import { sign, send, chaos } from 'hookforge-cli';
 
 const original = sign('standard', { event: 'user.created' });
 
@@ -129,7 +155,7 @@ const resExpired = await send('http://localhost:3000/api/webhooks', expired);
 Verify cryptographic HMAC signatures in your test suite using constant-time comparisons:
 
 ```typescript
-import { sign, verify } from 'hookforge';
+import { sign, verify } from 'hookforge-cli';
 
 const signed = sign('github', { event: 'push' });
 const isValid = verify(signed); // true
@@ -152,7 +178,7 @@ const isTamperedValid = verify(tampered); // false
 
 ## Architecture & Zero-Dependency Guarantee
 
-* **Zero Runtime Dependencies:** `hookforge` contains **0** production dependencies. It relies exclusively on Node.js built-ins (`node:crypto`, `node:util`) and global web standards (`fetch`, `Headers`, `Response`).
+* **Zero Runtime Dependencies:** `hookforge-cli` contains **0** production dependencies. It relies exclusively on Node.js built-ins (`node:crypto`, `node:util`) and global web standards (`fetch`, `Headers`, `Response`).
 * **Microsecond Startup:** No heavy CLI frameworks or bloated vendor SDKs to load before sending your event.
 * **Strict Byte Integrity:** The payload is held strictly as an immutable `Buffer`. We never re-stringify, format, or normalize JSON across signing and dispatch.
 * **Dual ESM + CommonJS:** Works seamlessly in modern ES modules (`import`) and legacy CommonJS (`require`).
