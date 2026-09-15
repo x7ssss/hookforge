@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHmac } from 'node:crypto';
-import { sign, tamper, replay, skew, verify } from '../src/index.js';
+import { sign, tamper, replay, skew, chaos, verify } from '../src/index.js';
 
 describe('Chaos Engine - src/chaos.ts', () => {
   describe('tamper()', () => {
@@ -144,6 +144,24 @@ describe('Chaos Engine - src/chaos.ts', () => {
       // Passes without timestamp limit, fails with 300s limit
       expect(verify(skewed)).toBe(true);
       expect(verify(skewed, { toleranceSeconds: 300 })).toBe(false);
+    });
+  });
+
+  describe('chaos namespace export', () => {
+    it('exports tamper, replay, and skew on chaos object', () => {
+      expect(typeof chaos.tamper).toBe('function');
+      expect(typeof chaos.replay).toBe('function');
+      expect(typeof chaos.skew).toBe('function');
+
+      const original = sign('stripe');
+      const tampered = chaos.tamper(original);
+      expect(verify(tampered)).toBe(false);
+
+      const replayed = chaos.replay(original);
+      expect(verify(replayed)).toBe(true);
+
+      const skewed = chaos.skew(original, 600);
+      expect(verify(skewed, { toleranceSeconds: 60 })).toBe(false);
     });
   });
 });

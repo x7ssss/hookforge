@@ -11,11 +11,25 @@ export interface SendOptions {
  * Preserves exact bytes and sets provider signature headers.
  */
 export async function send(
-  payload: SignedPayload,
-  targetUrl: string | URL,
+  first: SignedPayload | string | URL,
+  second: SignedPayload | string | URL,
   options: SendOptions = {}
 ): Promise<Response> {
-  const url = typeof targetUrl === 'string' ? targetUrl : targetUrl.toString();
+  let payload: SignedPayload;
+  let rawUrl: string | URL;
+
+  if (typeof first === 'string' || first instanceof URL) {
+    rawUrl = first;
+    payload = second as SignedPayload;
+  } else {
+    payload = first as SignedPayload;
+    rawUrl = second as string | URL;
+  }
+
+  let url = typeof rawUrl === 'string' ? rawUrl : rawUrl.toString();
+  if (!/^https?:\/\//i.test(url)) {
+    url = `http://${url}`;
+  }
 
   const headers: Record<string, string> = {
     ...payload.headers,

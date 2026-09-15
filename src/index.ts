@@ -9,6 +9,7 @@ export type {
 export { sign } from './sign.js';
 export { send, type SendOptions } from './send.js';
 export { verify, type VerifyOptions } from './verify.js';
+export * as chaos from './chaos.js';
 export { tamper, replay, skew } from './chaos.js';
 
 export {

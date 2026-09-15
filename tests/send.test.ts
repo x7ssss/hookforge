@@ -100,4 +100,18 @@ describe('Send Engine - src/send.ts', () => {
     );
     expect(lastReceived!.body.equals(signed.rawBody)).toBe(true);
   });
+
+  it('supports send(url, signedPayload) parameter order and normalizes URL without scheme', async () => {
+    const signed = sign('stripe');
+    // Notice lack of http:// prefix
+    const urlWithoutScheme = `127.0.0.1:${serverPort}/webhook`;
+
+    const res = await send(urlWithoutScheme, signed);
+
+    expect(res.status).toBe(200);
+    expect(lastReceived!.headers['stripe-signature']).toBe(
+      signed.headers['stripe-signature']
+    );
+    expect(lastReceived!.body.equals(signed.rawBody)).toBe(true);
+  });
 });
