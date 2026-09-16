@@ -153,7 +153,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
   });
 
   if (values.version) {
-    console.log('0.2.0');
+    console.log('0.2.3');
     return 0;
   }
 
@@ -273,11 +273,3 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
   }
 }
 
-// If invoked as the main entry point
-if (process.argv[1] && (process.argv[1].endsWith('cli.js') || process.argv[1].endsWith('cli.ts'))) {
-  runCli().then((code) => {
-    if (code !== 0) {
-      process.exit(code);
-    }
-  });
-}

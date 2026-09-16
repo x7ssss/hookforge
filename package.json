@@ -1,15 +1,11 @@
 {
   "name": "hookforge-cli",
-  "version": "0.2.1",
+  "version": "0.2.6",
   "description": "Provider-accurate webhook traffic on your laptop. Zero tunnels, zero accounts.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "hookforge": "./dist/cli.js",
-    "hookforge-cli": "./dist/cli.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -20,7 +16,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "bin.js"
   ],
   "engines": {
     "node": ">=20.0.0"
@@ -28,8 +25,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "dev": "tsup --watch",
-    "prepack": "npm run build"
+    "dev": "tsup --watch"
   },
   "keywords": [
     "webhooks",
@@ -45,5 +41,9 @@
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^2.0.0"
+  },
+  "bin": {
+    "hookforge": "bin.js",
+    "hookforge-cli": "bin.js"
   }
 }
