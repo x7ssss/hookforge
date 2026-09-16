@@ -1,4 +1,9 @@
-export type ProviderName = 'stripe' | 'github' | 'standard';
+export type ProviderName =
+  | 'stripe'
+  | 'github'
+  | 'standard'
+  | 'shopify'
+  | 'slack';
 
 export interface WebhookOptions {
   event?: string;

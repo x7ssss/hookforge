@@ -16,37 +16,60 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
+function getHeader(headers: Record<string, string>, name: string): string | undefined {
+  const target = name.toLowerCase();
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === target) {
+      return v;
+    }
+  }
+  return undefined;
+}
+
 /**
- * Verifies the signature of a signed webhook payload across Stripe, GitHub, or Standard webhooks.
+ * Verifies the signature of a signed webhook payload across Stripe, GitHub, Standard, Shopify, and Slack webhooks.
  */
 export function verify(
-  payload: SignedPayload | { headers: Record<string, string>; rawBody: Buffer; secret?: string; provider?: ProviderName },
+  payload:
+    | SignedPayload
+    | {
+        headers: Record<string, string>;
+        rawBody: Buffer;
+        secret?: string;
+        provider?: ProviderName;
+      },
   options: VerifyOptions = {}
 ): boolean {
   const headers = payload.headers || {};
   const rawBody = payload.rawBody;
-  const secret = options.secret || ('secret' in payload ? payload.secret : undefined);
+  const secret =
+    options.secret || ('secret' in payload ? payload.secret : undefined);
 
   if (!secret) {
     throw new Error('Secret is required for signature verification');
   }
 
   // Detect provider
-  let provider = options.provider || ('provider' in payload ? payload.provider : undefined);
+  let provider =
+    options.provider || ('provider' in payload ? payload.provider : undefined);
   if (!provider) {
-    if ('stripe-signature' in headers) {
+    if (getHeader(headers, 'stripe-signature')) {
       provider = 'stripe';
-    } else if ('x-hub-signature-256' in headers) {
+    } else if (getHeader(headers, 'x-hub-signature-256')) {
       provider = 'github';
-    } else if ('webhook-signature' in headers) {
+    } else if (getHeader(headers, 'webhook-signature')) {
       provider = 'standard';
+    } else if (getHeader(headers, 'x-shopify-hmac-sha256')) {
+      provider = 'shopify';
+    } else if (getHeader(headers, 'x-slack-signature')) {
+      provider = 'slack';
     } else {
       throw new Error('Unable to determine webhook provider from headers');
     }
   }
 
   if (provider === 'stripe') {
-    const header = headers['stripe-signature'];
+    const header = getHeader(headers, 'stripe-signature');
     if (!header) return false;
 
     const parts = header.split(',');
@@ -78,7 +101,7 @@ export function verify(
   }
 
   if (provider === 'github') {
-    const header = headers['x-hub-signature-256'];
+    const header = getHeader(headers, 'x-hub-signature-256');
     if (!header || !header.startsWith('sha256=')) return false;
 
     const sig = header.slice('sha256='.length);
@@ -88,9 +111,9 @@ export function verify(
   }
 
   if (provider === 'standard') {
-    const sigHeader = headers['webhook-signature'];
-    const id = headers['webhook-id'];
-    const timestamp = headers['webhook-timestamp'];
+    const sigHeader = getHeader(headers, 'webhook-signature');
+    const id = getHeader(headers, 'webhook-id');
+    const timestamp = getHeader(headers, 'webhook-timestamp');
 
     if (!sigHeader || !id || !timestamp) return false;
 
@@ -113,6 +136,39 @@ export function verify(
       .map((item) => item.slice('v1,'.length));
 
     return signatures.some((sig) => safeCompare(sig, expected));
+  }
+
+  if (provider === 'shopify') {
+    const sigHeader = getHeader(headers, 'x-shopify-hmac-sha256');
+    if (!sigHeader) return false;
+
+    const expected = createHmac('sha256', secret).update(rawBody).digest('base64');
+    return safeCompare(sigHeader, expected);
+  }
+
+  if (provider === 'slack') {
+    const sigHeader = getHeader(headers, 'x-slack-signature');
+    const timestampHeader = getHeader(headers, 'x-slack-request-timestamp');
+
+    if (!sigHeader || !timestampHeader || !sigHeader.startsWith('v0=')) {
+      return false;
+    }
+
+    const timestamp = parseInt(timestampHeader, 10);
+    if (isNaN(timestamp)) return false;
+
+    if (options.toleranceSeconds !== undefined) {
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - timestamp) > options.toleranceSeconds) {
+        return false;
+      }
+    }
+
+    const sig = sigHeader.slice('v0='.length);
+    const baseString = `v0:${timestamp}:${rawBody.toString('utf8')}`;
+    const expected = createHmac('sha256', secret).update(baseString).digest('hex');
+
+    return safeCompare(sig, expected);
   }
 
   return false;

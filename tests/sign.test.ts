@@ -8,6 +8,10 @@ import {
   GITHUB_DEFAULT_EVENT,
   STANDARD_DEFAULT_SECRET,
   STANDARD_DEFAULT_EVENT,
+  SHOPIFY_DEFAULT_SECRET,
+  SHOPIFY_DEFAULT_EVENT,
+  SLACK_DEFAULT_SECRET,
+  SLACK_DEFAULT_EVENT,
   verify,
 } from '../src/index.js';
 
@@ -40,6 +44,28 @@ describe('Webhook Signing - src/sign.ts', () => {
         .digest('hex');
 
       expect(headerHex).toBe(expectedHex);
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs customer.subscription.deleted event with realistic fixture', () => {
+      const signed = sign('stripe', { event: 'customer.subscription.deleted' });
+
+      expect(signed.event).toBe('customer.subscription.deleted');
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.type).toBe('customer.subscription.deleted');
+      expect(body.data.object.object).toBe('subscription');
+      expect(body.data.object.status).toBe('canceled');
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs invoice.payment_failed event with realistic fixture', () => {
+      const signed = sign('stripe', { event: 'invoice.payment_failed' });
+
+      expect(signed.event).toBe('invoice.payment_failed');
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.type).toBe('invoice.payment_failed');
+      expect(body.data.object.object).toBe('invoice');
+      expect(body.data.object.paid).toBe(false);
       expect(verify(signed)).toBe(true);
     });
 
@@ -99,6 +125,18 @@ describe('Webhook Signing - src/sign.ts', () => {
         .digest('hex');
 
       expect(sigHex).toBe(expectedHex);
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs pull_request event with realistic fixture', () => {
+      const signed = sign('github', { event: 'pull_request' });
+
+      expect(signed.event).toBe('pull_request');
+      expect(signed.headers['x-github-event']).toBe('pull_request');
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.action).toBe('opened');
+      expect(body.pull_request).toBeDefined();
+      expect(body.pull_request.number).toBe(42);
       expect(verify(signed)).toBe(true);
     });
 
@@ -177,6 +215,108 @@ describe('Webhook Signing - src/sign.ts', () => {
         .digest('base64');
 
       expect(signed.headers['webhook-signature']).toBe(`v1,${expectedBase64}`);
+      expect(verify(signed)).toBe(true);
+    });
+  });
+
+  describe('Shopify Provider', () => {
+    it('signs default orders/create event with HMAC-SHA256 Base64 digest', () => {
+      const signed = sign('shopify');
+
+      expect(signed.provider).toBe('shopify');
+      expect(signed.event).toBe(SHOPIFY_DEFAULT_EVENT);
+      expect(signed.secret).toBe(SHOPIFY_DEFAULT_SECRET);
+      expect(Buffer.isBuffer(signed.rawBody)).toBe(true);
+
+      const hmacHeader = signed.headers['X-Shopify-Hmac-Sha256'];
+      expect(hmacHeader).toBeDefined();
+      expect(signed.headers['X-Shopify-Topic']).toBe('orders/create');
+      expect(signed.headers['content-type']).toBe('application/json');
+
+      // Independent verification over raw payload bytes
+      const expectedBase64 = createHmac('sha256', signed.secret)
+        .update(signed.rawBody)
+        .digest('base64');
+
+      expect(hmacHeader).toBe(expectedBase64);
+      expect(verify(signed)).toBe(true);
+
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.id).toBe(820982911946154508);
+      expect(body.financial_status).toBe('paid');
+    });
+
+    it('signs custom Shopify topic and payload accurately', () => {
+      const customPayload = { id: 9999, email: 'custom@shop.com' };
+      const customSecret = 'shpss_my_custom_secret_key';
+
+      const signed = sign('shopify', {
+        event: 'customers/create',
+        secret: customSecret,
+        payload: customPayload,
+      });
+
+      expect(signed.event).toBe('customers/create');
+      expect(signed.headers['X-Shopify-Topic']).toBe('customers/create');
+
+      const expectedBase64 = createHmac('sha256', customSecret)
+        .update(signed.rawBody)
+        .digest('base64');
+
+      expect(signed.headers['X-Shopify-Hmac-Sha256']).toBe(expectedBase64);
+      expect(verify(signed)).toBe(true);
+    });
+  });
+
+  describe('Slack Provider', () => {
+    it('signs default app_mention event with v0={hex} and X-Slack-Request-Timestamp', () => {
+      const signed = sign('slack');
+
+      expect(signed.provider).toBe('slack');
+      expect(signed.event).toBe(SLACK_DEFAULT_EVENT);
+      expect(signed.secret).toBe(SLACK_DEFAULT_SECRET);
+      expect(Buffer.isBuffer(signed.rawBody)).toBe(true);
+
+      const sigHeader = signed.headers['X-Slack-Signature'];
+      const timestampHeader = signed.headers['X-Slack-Request-Timestamp'];
+
+      expect(sigHeader).toBeDefined();
+      expect(timestampHeader).toBe(String(signed.timestamp));
+      expect(sigHeader.startsWith('v0=')).toBe(true);
+
+      // Independent verification format: v0:{timestamp}:{raw_body}
+      const baseString = `v0:${signed.timestamp}:${signed.rawBody.toString('utf8')}`;
+      const expectedHex = createHmac('sha256', signed.secret)
+        .update(baseString)
+        .digest('hex');
+
+      expect(sigHeader).toBe(`v0=${expectedHex}`);
+      expect(verify(signed)).toBe(true);
+
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.type).toBe('event_callback');
+      expect(body.event.type).toBe('app_mention');
+    });
+
+    it('signs custom event with explicit secret and timestamp', () => {
+      const customSecret = 'slack_secret_12345';
+      const customTimestamp = 1718100000;
+      const customPayload = { event: { type: 'message', text: 'Hello Slack' } };
+
+      const signed = sign('slack', {
+        event: 'message',
+        secret: customSecret,
+        timestamp: customTimestamp,
+        payload: customPayload,
+      });
+
+      const baseString = `v0:${customTimestamp}:${signed.rawBody.toString('utf8')}`;
+      const expectedHex = createHmac('sha256', customSecret)
+        .update(baseString)
+        .digest('hex');
+
+      expect(signed.headers['X-Slack-Signature']).toBe(`v0=${expectedHex}`);
+      expect(signed.headers['X-Slack-Request-Timestamp']).toBe(String(customTimestamp));
       expect(verify(signed)).toBe(true);
     });
   });

@@ -66,11 +66,35 @@ describe('Chaos Engine - src/chaos.ts', () => {
       );
       expect(verify(tampered)).toBe(false);
     });
+
+    it('mutates Shopify payload raw body and causes verification to fail', () => {
+      const original = sign('shopify');
+      expect(verify(original)).toBe(true);
+
+      const tampered = tamper(original);
+
+      expect(tampered.headers['X-Shopify-Hmac-Sha256']).toBe(
+        original.headers['X-Shopify-Hmac-Sha256']
+      );
+      expect(verify(tampered)).toBe(false);
+    });
+
+    it('mutates Slack payload raw body and causes verification to fail', () => {
+      const original = sign('slack');
+      expect(verify(original)).toBe(true);
+
+      const tampered = tamper(original);
+
+      expect(tampered.headers['X-Slack-Signature']).toBe(
+        original.headers['X-Slack-Signature']
+      );
+      expect(verify(tampered)).toBe(false);
+    });
   });
 
   describe('replay()', () => {
-    it('preserves identical timestamp and signature headers across providers', () => {
-      const providers = ['stripe', 'github', 'standard'] as const;
+    it('preserves identical timestamp and signature headers across all providers', () => {
+      const providers = ['stripe', 'github', 'standard', 'shopify', 'slack'] as const;
 
       for (const provider of providers) {
         const original = sign(provider);
@@ -88,7 +112,7 @@ describe('Chaos Engine - src/chaos.ts', () => {
     });
 
     it('returns a detached buffer copy to prevent cross-mutation', () => {
-      const original = sign('stripe');
+      const original = sign('shopify');
       const replayed = replay(original);
 
       expect(replayed.rawBody).not.toBe(original.rawBody);
@@ -145,6 +169,28 @@ describe('Chaos Engine - src/chaos.ts', () => {
       expect(verify(skewed)).toBe(true);
       expect(verify(skewed, { toleranceSeconds: 300 })).toBe(false);
     });
+
+    it('recalculates Slack signature with stale timestamp and header', () => {
+      const original = sign('slack');
+      const secondsAgo = 600; // 10 minutes ago
+      const skewed = skew(original, secondsAgo);
+
+      const expectedStaleTimestamp = original.timestamp - secondsAgo;
+      expect(skewed.timestamp).toBe(expectedStaleTimestamp);
+      expect(skewed.headers['X-Slack-Request-Timestamp']).toBe(String(expectedStaleTimestamp));
+
+      const baseString = `v0:${expectedStaleTimestamp}:${skewed.rawBody.toString('utf8')}`;
+      const expectedHex = createHmac('sha256', skewed.secret)
+        .update(baseString)
+        .digest('hex');
+
+      expect(skewed.headers['X-Slack-Signature']).toBe(`v0=${expectedHex}`);
+
+      // Cryptographically valid without tolerance
+      expect(verify(skewed)).toBe(true);
+      // Fails with 300s tolerance
+      expect(verify(skewed, { toleranceSeconds: 300 })).toBe(false);
+    });
   });
 
   describe('chaos namespace export', () => {
@@ -153,14 +199,15 @@ describe('Chaos Engine - src/chaos.ts', () => {
       expect(typeof chaos.replay).toBe('function');
       expect(typeof chaos.skew).toBe('function');
 
-      const original = sign('stripe');
+      const original = sign('shopify');
       const tampered = chaos.tamper(original);
       expect(verify(tampered)).toBe(false);
 
       const replayed = chaos.replay(original);
       expect(verify(replayed)).toBe(true);
 
-      const skewed = chaos.skew(original, 600);
+      const slackOriginal = sign('slack');
+      const skewed = chaos.skew(slackOriginal, 600);
       expect(verify(skewed, { toleranceSeconds: 60 })).toBe(false);
     });
   });

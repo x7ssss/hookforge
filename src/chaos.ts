@@ -1,5 +1,6 @@
 import { computeStripeSignature } from './providers/stripe.js';
 import { computeStandardSignature } from './providers/standard.js';
+import { computeSlackSignature } from './providers/slack.js';
 import type { SignedPayload } from './types.js';
 
 /**
@@ -54,6 +55,10 @@ export function skew(
     payload.provider === 'stripe' || 'stripe-signature' in newHeaders;
   const isStandard =
     payload.provider === 'standard' || 'webhook-signature' in newHeaders;
+  const isSlack =
+    payload.provider === 'slack' ||
+    'x-slack-signature' in newHeaders ||
+    'X-Slack-Signature' in newHeaders;
 
   if (isStripe) {
     newHeaders['stripe-signature'] = computeStripeSignature(
@@ -71,6 +76,22 @@ export function skew(
     );
     newHeaders['webhook-timestamp'] = String(staleTimestamp);
     newHeaders['webhook-id'] = id;
+  } else if (isSlack) {
+    const sig = computeSlackSignature(
+      payload.secret,
+      staleTimestamp,
+      payload.rawBody
+    );
+    const keySig =
+      'X-Slack-Signature' in newHeaders
+        ? 'X-Slack-Signature'
+        : 'x-slack-signature';
+    const keyTs =
+      'X-Slack-Request-Timestamp' in newHeaders
+        ? 'X-Slack-Request-Timestamp'
+        : 'x-slack-request-timestamp';
+    newHeaders[keySig] = sig;
+    newHeaders[keyTs] = String(staleTimestamp);
   }
 
   return {

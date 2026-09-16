@@ -31,6 +31,12 @@ Fire authentic, cryptographically signed webhook payloads at your local server u
 # Send a valid Stripe payment_intent.succeeded event
 npx hookforge-cli stripe payment_intent.succeeded --to localhost:3000/api/webhooks
 
+# Send a Shopify orders/create webhook
+npx hookforge-cli shopify orders/create --to localhost:3000/api/webhooks
+
+# Send a Slack app_mention webhook
+npx hookforge-cli slack app_mention --to localhost:3000/api/webhooks
+
 # Tamper 1 byte in the body to verify your signature rejection logic (returns 400/401)
 npx hookforge-cli standard user.created --to localhost:3000/api/webhooks --tamper
 
@@ -53,7 +59,19 @@ npm install -g hookforge-cli
 hookforge stripe payment_intent.succeeded --to localhost:3000/api/webhooks
 
 # Using the full hookforge-cli command
-hookforge-cli stripe payment_intent.succeeded --to localhost:3000/api/webhooks
+hookforge-cli shopify orders/create --to localhost:3000/api/webhooks
+```
+
+### 3. Piping Payloads via Stdin
+
+Pipe custom JSON payloads directly from files or other CLI utilities:
+
+```bash
+# Pipe custom payload from file (auto-detected when piped)
+cat custom-order.json | hookforge shopify orders/create --to localhost:3000/api/webhooks
+
+# Pipe custom payload using explicit stdin flag
+echo '{"action": "custom_event"}' | hookforge github push --to localhost:3000/api/webhooks --data -
 ```
 
 ---
@@ -68,8 +86,8 @@ hookforge <provider> <event> --to <target_url> [options]
 npx hookforge-cli <provider> <event> --to <target_url> [options]
 
 ARGUMENTS:
-  <provider>            Provider name (stripe | github | standard)
-  <event>               Event name (e.g. payment_intent.succeeded, push, user.created)
+  <provider>            Provider name (stripe | github | standard | shopify | slack)
+  <event>               Event name (e.g. payment_intent.succeeded, push, user.created, orders/create, app_mention)
 
 OPTIONS:
   --to <url>            Target URL to send webhook to (required)
@@ -77,7 +95,7 @@ OPTIONS:
   --tamper              Mutate 1 byte in payload body to test signature rejection
   --replay              Send webhook then replay identical payload and headers
   --skew <seconds>      Recalculate signature with a stale timestamp (seconds ago)
-  --data <json>         Custom JSON string payload
+  --data <json>         Custom JSON string payload (or '-' to read from stdin)
   -h, --help            Show help message
   -v, --version         Show version
 ```
@@ -118,7 +136,7 @@ A lightweight wrapper around native `fetch` that POSTs the raw `Buffer` with an 
 ```typescript
 import { sign, send } from 'hookforge-cli';
 
-const signed = sign('stripe');
+const signed = sign('shopify');
 
 // Both parameter orders supported:
 const res = await send('http://localhost:3000/api/webhooks', signed);
@@ -152,7 +170,7 @@ const resExpired = await send('http://localhost:3000/api/webhooks', expired);
 
 ### 4. `verify(payload, options?)`
 
-Verify cryptographic HMAC signatures in your test suite using constant-time comparisons:
+Verify cryptographic HMAC signatures in your test suite using constant-time comparisons across all supported providers:
 
 ```typescript
 import { sign, verify } from 'hookforge-cli';
@@ -173,6 +191,8 @@ const isTamperedValid = verify(tampered); // false
 | **Stripe** | `stripe-signature` | HMAC-SHA256 hex (`t=${t},v1=${hex}`) over `${t}.${body}` | Stripe Payments, Billing, Connect |
 | **GitHub** | `x-hub-signature-256` | HMAC-SHA256 hex (`sha256=${hex}`) over raw body bytes | GitHub Apps, Webhooks, Actions |
 | **Standard Webhooks** | `webhook-signature` | HMAC-SHA256 base64 (`v1,${base64}`) over `${id}.${t}.${body}` | Svix, Clerk, Resend, Linear, Supabase |
+| **Shopify** | `X-Shopify-Hmac-Sha256` | HMAC-SHA256 base64 digest over raw payload body | Shopify Apps, Checkout, Orders |
+| **Slack** | `X-Slack-Signature` | HMAC-SHA256 hex (`v0=${hex}`) over `v0:${timestamp}:${body}` | Slack Apps, Bolt, Events API |
 
 ---
 

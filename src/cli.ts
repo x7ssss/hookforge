@@ -61,10 +61,11 @@ ${c.bold}hookforge${c.reset} - Provider-accurate webhook traffic on your laptop
 
 ${c.bold}USAGE:${c.reset}
   hookforge <provider> <event> --to <target_url> [options]
+  cat payload.json | hookforge <provider> <event> --to <target_url>
 
 ${c.bold}ARGUMENTS:${c.reset}
-  <provider>            Provider name (${c.cyan}stripe${c.reset} | ${c.cyan}github${c.reset} | ${c.cyan}standard${c.reset})
-  <event>               Event name (e.g. payment_intent.succeeded, push, user.created)
+  <provider>            Provider name (${c.cyan}stripe${c.reset} | ${c.cyan}github${c.reset} | ${c.cyan}standard${c.reset} | ${c.cyan}shopify${c.reset} | ${c.cyan}slack${c.reset})
+  <event>               Event name (e.g. payment_intent.succeeded, push, user.created, orders/create, app_mention)
 
 ${c.bold}OPTIONS:${c.reset}
   --to <url>            Target URL to send webhook to (required)
@@ -72,10 +73,66 @@ ${c.bold}OPTIONS:${c.reset}
   --tamper              Mutate 1 byte in payload body to test signature rejection
   --replay              Send webhook then replay identical payload and headers
   --skew <seconds>      Recalculate signature with a stale timestamp (seconds ago)
-  --data <json>         Custom JSON string payload
+  --data <json>         Custom JSON string payload (or '-' to force reading from stdin)
   -h, --help            Show this help message
   -v, --version         Show version
 `);
+}
+
+/**
+ * Reads standard input if piped or requested via --data -.
+ * Falls back to undefined if stdin is empty or unpiped.
+ */
+export async function readStdin(timeoutMs = 50): Promise<string | undefined> {
+  if (process.stdin.isTTY && timeoutMs > 0) {
+    return undefined;
+  }
+
+  return new Promise((resolve) => {
+    let timer: NodeJS.Timeout | undefined;
+    const chunks: Buffer[] = [];
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      process.stdin.removeListener('data', onData);
+      process.stdin.removeListener('end', onEnd);
+      process.stdin.removeListener('error', onError);
+      process.stdin.pause();
+    };
+
+    const onData = (chunk: Buffer) => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    };
+
+    const onEnd = () => {
+      cleanup();
+      const content = Buffer.concat(chunks).toString('utf8').trim();
+      resolve(content.length > 0 ? content : undefined);
+    };
+
+    const onError = () => {
+      cleanup();
+      resolve(undefined);
+    };
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        if (chunks.length === 0) {
+          cleanup();
+          resolve(undefined);
+        }
+      }, timeoutMs);
+    }
+
+    process.stdin.on('data', onData);
+    process.stdin.on('end', onEnd);
+    process.stdin.on('error', onError);
+    process.stdin.resume();
+  });
 }
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<number> {
@@ -96,7 +153,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
   });
 
   if (values.version) {
-    console.log('0.1.0');
+    console.log('0.2.0');
     return 0;
   }
 
@@ -110,7 +167,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
 
   if (!provider || !providers[provider]) {
     console.error(
-      `${c.red}Error:${c.reset} Invalid or missing provider "${rawProvider}". Supported providers: stripe, github, standard`
+      `${c.red}Error:${c.reset} Invalid or missing provider "${rawProvider}". Supported providers: stripe, github, standard, shopify, slack`
     );
     return 1;
   }
@@ -129,12 +186,22 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<nu
     return 1;
   }
 
+  // Handle stdin payload piping or --data argument
+  let rawData: string | undefined;
+  if (values.data === '-') {
+    rawData = await readStdin(0);
+  } else if (typeof values.data === 'string') {
+    rawData = values.data;
+  } else if (!process.stdin.isTTY) {
+    rawData = await readStdin(50);
+  }
+
   let customPayload: unknown | undefined;
-  if (typeof values.data === 'string') {
+  if (rawData !== undefined && rawData.length > 0) {
     try {
-      customPayload = JSON.parse(values.data);
+      customPayload = JSON.parse(rawData);
     } catch {
-      customPayload = values.data;
+      customPayload = rawData;
     }
   }
 

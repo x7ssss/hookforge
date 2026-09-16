@@ -39,6 +39,42 @@ export const githubFixtures: Record<string, unknown> = {
       },
     ],
   },
+  pull_request: {
+    action: 'opened',
+    number: 42,
+    pull_request: {
+      id: 1347,
+      number: 42,
+      state: 'open',
+      title: 'feat: add shopify and slack webhook support',
+      user: {
+        login: 'octocat',
+        id: 1,
+      },
+      body: 'Implements new webhook providers and expands fixtures.',
+      head: {
+        ref: 'feature-branch',
+        sha: '6dcb09b5b57875f334f61aebed695e2e4193db5e',
+      },
+      base: {
+        ref: 'main',
+        sha: '0000000000000000000000000000000000000000',
+      },
+    },
+    repository: {
+      id: 1296269,
+      name: 'hookforge',
+      full_name: 'octocat/hookforge',
+      owner: {
+        login: 'octocat',
+        id: 1,
+      },
+    },
+    sender: {
+      login: 'octocat',
+      id: 1,
+    },
+  },
 };
 
 export function getGithubFixture(event: string = GITHUB_DEFAULT_EVENT): unknown {

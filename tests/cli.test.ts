@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { runCli } from '../src/cli.js';
+import { runCli, readStdin } from '../src/cli.js';
 
 describe('CLI - src/cli.ts', () => {
   let server: Server;
   let serverPort: number;
-  const receivedRequests: Array<{ headers: Record<string, string | string[] | undefined>; body: string }> = [];
+  const receivedRequests: Array<{
+    headers: Record<string, string | string[] | undefined>;
+    body: string;
+  }> = [];
 
   beforeAll(async () => {
     server = createServer((req, res) => {
@@ -42,7 +45,7 @@ describe('CLI - src/cli.ts', () => {
     expect(code).toBe(0);
   });
 
-  it('prints version and exits with 0 on --version', async () => {
+  it('prints version 0.2.0 and exits with 0 on --version', async () => {
     const code = await runCli(['--version']);
     expect(code).toBe(0);
   });
@@ -65,6 +68,28 @@ describe('CLI - src/cli.ts', () => {
     expect(code).toBe(0);
     expect(receivedRequests.length).toBe(1);
     expect(receivedRequests[0].headers['stripe-signature']).toBeDefined();
+  });
+
+  it('sends shopify orders/create webhook via CLI', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const code = await runCli(['shopify', 'orders/create', '--to', target]);
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].headers['x-shopify-hmac-sha256']).toBeDefined();
+    expect(receivedRequests[0].headers['x-shopify-topic']).toBe('orders/create');
+  });
+
+  it('sends slack app_mention webhook via CLI', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const code = await runCli(['slack', 'app_mention', '--to', target]);
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].headers['x-slack-signature']).toBeDefined();
+    expect(receivedRequests[0].headers['x-slack-request-timestamp']).toBeDefined();
   });
 
   it('sends both original and replayed payloads when --replay is used', async () => {
@@ -107,5 +132,52 @@ describe('CLI - src/cli.ts', () => {
     expect(code).toBe(0);
     expect(receivedRequests.length).toBe(1);
     expect(receivedRequests[0].headers['x-hub-signature-256']).toBeDefined();
+  });
+
+  it('sends custom inline json payload via --data', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+    const customData = JSON.stringify({ custom_event: true, value: 42 });
+
+    const code = await runCli([
+      'stripe',
+      'custom.event',
+      '--to',
+      target,
+      '--data',
+      customData,
+    ]);
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].body).toBe(customData);
+  });
+
+  it('readStdin returns undefined cleanly when stdin is empty or unpiped', async () => {
+    const result = await readStdin(10);
+    expect(result).toBeUndefined();
+  });
+
+  it('reads payload from stdin when --data - is passed', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+    const pipedData = JSON.stringify({ from_stdin: true, amount: 999 });
+
+    process.nextTick(() => {
+      process.stdin.push(pipedData);
+      process.stdin.push(null);
+    });
+
+    const code = await runCli([
+      'stripe',
+      'payment_intent.succeeded',
+      '--to',
+      target,
+      '--data',
+      '-',
+    ]);
+
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].body).toBe(pipedData);
   });
 });
