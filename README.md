@@ -1,11 +1,35 @@
 # hookforge
 
-[![CI](https://github.com/x7ssss/hookforge/actions/workflows/ci.yml/badge.svg)](https://github.com/x7ssss/hookforge/actions/workflows/ci.yml)
 [![npm version](https://img.shields.io/npm/v/hookforge-cli.svg?style=flat-square)](https://www.npmjs.com/package/hookforge-cli)
+[![CI](https://github.com/x7ssss/hookforge/actions/workflows/ci.yml/badge.svg)](https://github.com/x7ssss/hookforge/actions/workflows/ci.yml)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg?style=flat-square)](https://www.npmjs.com/package/hookforge-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 > **Provider-accurate webhook traffic on your laptop. Zero tunnels, zero accounts, 0 outbound network requests.**
+
+---
+
+## Terminal Demo
+
+Test legitimate webhook handlers and signature rejection logic in milliseconds:
+
+```text
+# 1. Normal delivery -> 200 OK
+$ npx hookforge-cli stripe payment_intent.succeeded --to http://localhost:3000/api/webhooks
+
+[2026-09-16T09:00:00.124Z] STRIPE payment_intent.succeeded
+  Target:       http://localhost:3000/api/webhooks
+  Payload Size: 541 bytes
+  HTTP Status:  200 OK
+
+# 2. Tampered body (1 byte mutated, original signature kept) -> 400 Bad Request
+$ npx hookforge-cli stripe payment_intent.succeeded --to http://localhost:3000/api/webhooks --tamper
+
+[2026-09-16T09:00:01.402Z] STRIPE payment_intent.succeeded [TAMPERED]
+  Target:       http://localhost:3000/api/webhooks
+  Payload Size: 541 bytes
+  HTTP Status:  400 Bad Request
+```
 
 ---
 
@@ -21,6 +45,21 @@ Testing webhook handlers in local development is traditionally painful and fragi
 
 ---
 
+## Why hookforge vs Vendor CLIs vs ngrok
+
+| Feature | hookforge | Vendor CLIs (`stripe-cli`, `gh`) | ngrok / Tunnels |
+| :--- | :--- | :--- | :--- |
+| **Network Requirement** | **100% Offline** (localhost only) | Requires active internet connection | Requires active internet connection |
+| **Third-Party Accounts** | **Zero accounts**, zero API keys | Requires dashboard login & token | Requires ngrok account & auth token |
+| **Multi-Provider** | **Unified** (Stripe, GitHub, Slack, Shopify, Standard) | Fragmented (separate CLI per vendor) | Agnostic tunnel (does not generate webhooks) |
+| **Signature Verification Testing** | **Native** (recreates exact HMAC signatures) | Generates valid signatures only | Passes cloud signatures through tunnel |
+| **Chaos & Attack Simulation** | **Built-in** (`--tamper`, `--replay`, `--skew`) | **None** (cannot send malformed traffic) | **None** (cannot simulate attacks) |
+| **CI / Automated Test Suitability** | **Instant** (`npm install`, runs in headless CI) | Complex (requires mock services / secrets) | Poor (requires tunnels and public listeners) |
+| **Runtime Dependencies** | **0 dependencies** (Node built-ins only) | Standalone binary or heavy packages | Heavy binary daemon |
+| **Startup Overhead** | **<50ms** | Variable (cloud authentication handshake) | Variable (tunnel negotiation handshake) |
+
+---
+
 ## Installation & Quickstart
 
 ### 1. Direct Runner (No Installation Required)
@@ -29,19 +68,19 @@ Fire authentic, cryptographically signed webhook payloads at your local server u
 
 ```bash
 # Send a valid Stripe payment_intent.succeeded event
-npx hookforge-cli stripe payment_intent.succeeded --to localhost:3000/api/webhooks
+npx hookforge-cli stripe payment_intent.succeeded --to http://localhost:3000/api/webhooks
 
 # Send a Shopify orders/create webhook
-npx hookforge-cli shopify orders/create --to localhost:3000/api/webhooks
+npx hookforge-cli shopify orders/create --to http://localhost:3000/api/webhooks
 
 # Send a Slack app_mention webhook
-npx hookforge-cli slack app_mention --to localhost:3000/api/webhooks
+npx hookforge-cli slack app_mention --to http://localhost:3000/api/webhooks
 
 # Tamper 1 byte in the body to verify your signature rejection logic (returns 400/401)
-npx hookforge-cli standard user.created --to localhost:3000/api/webhooks --tamper
+npx hookforge-cli standard user.created --to http://localhost:3000/api/webhooks --tamper
 
 # Replay an event with identical timestamp and signature to test idempotency
-npx hookforge-cli github push --to localhost:3000/api/webhooks --replay
+npx hookforge-cli github push --to http://localhost:3000/api/webhooks --replay
 ```
 
 ### 2. Global Installation
@@ -56,10 +95,10 @@ npm install -g hookforge-cli
 
 ```bash
 # Using the hookforge alias
-hookforge stripe payment_intent.succeeded --to localhost:3000/api/webhooks
+hookforge stripe payment_intent.succeeded --to http://localhost:3000/api/webhooks
 
 # Using the full hookforge-cli command
-hookforge-cli shopify orders/create --to localhost:3000/api/webhooks
+hookforge-cli shopify orders/create --to http://localhost:3000/api/webhooks
 ```
 
 ### 3. Piping Payloads via Stdin
@@ -68,10 +107,10 @@ Pipe custom JSON payloads directly from files or other CLI utilities:
 
 ```bash
 # Pipe custom payload from file (auto-detected when piped)
-cat custom-order.json | hookforge shopify orders/create --to localhost:3000/api/webhooks
+cat custom-order.json | hookforge shopify orders/create --to http://localhost:3000/api/webhooks
 
 # Pipe custom payload using explicit stdin flag
-echo '{"action": "custom_event"}' | hookforge github push --to localhost:3000/api/webhooks --data -
+echo '{"action": "custom_event"}' | hookforge github push --to http://localhost:3000/api/webhooks --data -
 ```
 
 ---
