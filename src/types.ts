@@ -3,7 +3,11 @@ export type ProviderName =
   | 'github'
   | 'standard'
   | 'shopify'
-  | 'slack';
+  | 'slack'
+  | 'paddle'
+  | 'resend'
+  | 'twilio'
+  | 'svix';
 
 export interface WebhookOptions {
   event?: string;
@@ -12,6 +16,8 @@ export interface WebhookOptions {
   body?: unknown | string | Buffer;
   timestamp?: number;
   id?: string;
+  targetUrl?: string;
+  url?: string;
   [key: string]: unknown;
 }
 
@@ -23,6 +29,7 @@ export interface SignedPayload {
   timestamp: number;
   provider?: ProviderName;
   id?: string;
+  targetUrl?: string;
 }
 
 export interface ProviderDefinition {
@@ -36,5 +43,6 @@ export interface ProviderDefinition {
     timestamp: number;
     event: string;
     id?: string;
+    targetUrl?: string;
   }): Record<string, string>;
 }

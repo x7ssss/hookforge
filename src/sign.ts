@@ -37,15 +37,21 @@ export function sign(
   }
 
   const id = options.id;
+  const targetUrl =
+    (typeof options.targetUrl === 'string' ? options.targetUrl : undefined) ||
+    (typeof options.url === 'string' ? options.url : undefined) ||
+    'http://localhost:3000/api/webhooks';
+
   const headers = providerDef.sign({
     rawBody,
     secret,
     timestamp,
     event,
     id,
+    targetUrl,
   });
 
-  const resolvedId = id || headers['webhook-id'];
+  const resolvedId = id || headers['webhook-id'] || headers['svix-id'];
 
   return {
     headers: { ...headers },
@@ -54,6 +60,7 @@ export function sign(
     event,
     timestamp,
     provider,
+    targetUrl,
     ...(resolvedId ? { id: resolvedId } : {}),
   };
 }

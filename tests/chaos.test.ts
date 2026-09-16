@@ -90,11 +90,56 @@ describe('Chaos Engine - src/chaos.ts', () => {
       );
       expect(verify(tampered)).toBe(false);
     });
+
+    it('mutates Paddle payload raw body and causes verification to fail', () => {
+      const original = sign('paddle');
+      expect(verify(original)).toBe(true);
+
+      const tampered = tamper(original);
+
+      expect(tampered.headers['Paddle-Signature']).toBe(
+        original.headers['Paddle-Signature']
+      );
+      expect(verify(tampered)).toBe(false);
+    });
+
+    it('mutates Resend payload raw body and causes verification to fail', () => {
+      const original = sign('resend');
+      expect(verify(original)).toBe(true);
+
+      const tampered = tamper(original);
+
+      expect(tampered.headers['svix-signature']).toBe(
+        original.headers['svix-signature']
+      );
+      expect(verify(tampered)).toBe(false);
+    });
+
+    it('mutates Twilio payload raw body and causes verification to fail', () => {
+      const original = sign('twilio');
+      expect(verify(original)).toBe(true);
+
+      const tampered = tamper(original);
+
+      expect(tampered.headers['X-Twilio-Signature']).toBe(
+        original.headers['X-Twilio-Signature']
+      );
+      expect(verify(tampered)).toBe(false);
+    });
   });
 
   describe('replay()', () => {
     it('preserves identical timestamp and signature headers across all providers', () => {
-      const providers = ['stripe', 'github', 'standard', 'shopify', 'slack'] as const;
+      const providers = [
+        'stripe',
+        'github',
+        'standard',
+        'shopify',
+        'slack',
+        'paddle',
+        'resend',
+        'twilio',
+      ] as const;
 
       for (const provider of providers) {
         const original = sign(provider);
@@ -189,6 +234,35 @@ describe('Chaos Engine - src/chaos.ts', () => {
       // Cryptographically valid without tolerance
       expect(verify(skewed)).toBe(true);
       // Fails with 300s tolerance
+      expect(verify(skewed, { toleranceSeconds: 300 })).toBe(false);
+    });
+
+    it('recalculates Paddle signature with stale timestamp and header', () => {
+      const original = sign('paddle');
+      const secondsAgo = 600;
+      const skewed = skew(original, secondsAgo);
+
+      const expectedStaleTimestamp = original.timestamp - secondsAgo;
+      expect(skewed.timestamp).toBe(expectedStaleTimestamp);
+
+      const match = skewed.headers['Paddle-Signature'].match(/^ts=(\d+);h1=([a-f0-9]{64})$/);
+      expect(match).not.toBeNull();
+      expect(parseInt(match![1], 10)).toBe(expectedStaleTimestamp);
+
+      expect(verify(skewed)).toBe(true);
+      expect(verify(skewed, { toleranceSeconds: 300 })).toBe(false);
+    });
+
+    it('recalculates Resend signature with stale timestamp and svix headers', () => {
+      const original = sign('resend');
+      const secondsAgo = 600;
+      const skewed = skew(original, secondsAgo);
+
+      const expectedStaleTimestamp = original.timestamp - secondsAgo;
+      expect(skewed.timestamp).toBe(expectedStaleTimestamp);
+      expect(skewed.headers['svix-timestamp']).toBe(String(expectedStaleTimestamp));
+
+      expect(verify(skewed)).toBe(true);
       expect(verify(skewed, { toleranceSeconds: 300 })).toBe(false);
     });
   });

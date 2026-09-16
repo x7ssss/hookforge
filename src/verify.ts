@@ -1,10 +1,13 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { ProviderName, SignedPayload } from './types.js';
+import { extractSortedParams } from './providers/twilio.js';
 
 export interface VerifyOptions {
   secret?: string;
   provider?: ProviderName;
   toleranceSeconds?: number;
+  targetUrl?: string;
+  url?: string;
 }
 
 function safeCompare(a: string, b: string): boolean {
@@ -27,7 +30,7 @@ function getHeader(headers: Record<string, string>, name: string): string | unde
 }
 
 /**
- * Verifies the signature of a signed webhook payload across Stripe, GitHub, Standard, Shopify, and Slack webhooks.
+ * Verifies the signature of a signed webhook payload across Stripe, GitHub, Standard, Shopify, Slack, Paddle, Resend, and Twilio webhooks.
  */
 export function verify(
   payload:
@@ -37,6 +40,7 @@ export function verify(
         rawBody: Buffer;
         secret?: string;
         provider?: ProviderName;
+        targetUrl?: string;
       },
   options: VerifyOptions = {}
 ): boolean {
@@ -63,6 +67,12 @@ export function verify(
       provider = 'shopify';
     } else if (getHeader(headers, 'x-slack-signature')) {
       provider = 'slack';
+    } else if (getHeader(headers, 'paddle-signature')) {
+      provider = 'paddle';
+    } else if (getHeader(headers, 'svix-signature')) {
+      provider = 'resend';
+    } else if (getHeader(headers, 'x-twilio-signature')) {
+      provider = 'twilio';
     } else {
       throw new Error('Unable to determine webhook provider from headers');
     }
@@ -110,7 +120,7 @@ export function verify(
     return safeCompare(sig, expected);
   }
 
-  if (provider === 'standard') {
+  if (provider === 'standard' || provider === 'svix') {
     const sigHeader = getHeader(headers, 'webhook-signature');
     const id = getHeader(headers, 'webhook-id');
     const timestamp = getHeader(headers, 'webhook-timestamp');
@@ -169,6 +179,83 @@ export function verify(
     const expected = createHmac('sha256', secret).update(baseString).digest('hex');
 
     return safeCompare(sig, expected);
+  }
+
+  if (provider === 'paddle') {
+    const header = getHeader(headers, 'paddle-signature');
+    if (!header) return false;
+
+    const parts = header.split(';');
+    let timestamp: number | undefined;
+    const signatures: string[] = [];
+
+    for (const part of parts) {
+      const [key, val] = part.split('=');
+      if (key?.trim() === 'ts') {
+        timestamp = parseInt(val?.trim(), 10);
+      } else if (key?.trim() === 'h1') {
+        signatures.push(val?.trim());
+      }
+    }
+
+    if (timestamp === undefined || signatures.length === 0) return false;
+
+    if (options.toleranceSeconds !== undefined) {
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - timestamp) > options.toleranceSeconds) {
+        return false;
+      }
+    }
+
+    const baseString = `${timestamp}:${rawBody.toString('utf8')}`;
+    const expected = createHmac('sha256', secret).update(baseString).digest('hex');
+
+    return signatures.some((sig) => safeCompare(sig, expected));
+  }
+
+  if (provider === 'resend') {
+    const sigHeader = getHeader(headers, 'svix-signature');
+    const id = getHeader(headers, 'svix-id');
+    const timestamp = getHeader(headers, 'svix-timestamp');
+
+    if (!sigHeader || !id || !timestamp) return false;
+
+    if (options.toleranceSeconds !== undefined) {
+      const now = Math.floor(Date.now() / 1000);
+      const parsedTs = parseInt(timestamp, 10);
+      if (isNaN(parsedTs) || Math.abs(now - parsedTs) > options.toleranceSeconds) {
+        return false;
+      }
+    }
+
+    const baseString = `${id}.${timestamp}.${rawBody.toString('utf8')}`;
+    const expected = createHmac('sha256', secret).update(baseString).digest('base64');
+
+    const signatures = sigHeader
+      .split(' ')
+      .map((item) => item.trim())
+      .filter((item) => item.startsWith('v1,'))
+      .map((item) => item.slice('v1,'.length));
+
+    return signatures.some((sig) => safeCompare(sig, expected));
+  }
+
+  if (provider === 'twilio') {
+    const sigHeader = getHeader(headers, 'x-twilio-signature');
+    if (!sigHeader) return false;
+
+    const targetUrl =
+      options.targetUrl ||
+      options.url ||
+      ('targetUrl' in payload && typeof payload.targetUrl === 'string'
+        ? payload.targetUrl
+        : 'http://localhost:3000/api/webhooks');
+
+    const sortedParams = extractSortedParams(rawBody);
+    const baseString = `${targetUrl}${sortedParams}`;
+    const expected = createHmac('sha1', secret).update(baseString).digest('base64');
+
+    return safeCompare(sigHeader, expected);
   }
 
   return false;

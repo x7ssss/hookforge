@@ -1,6 +1,8 @@
 import { computeStripeSignature } from './providers/stripe.js';
 import { computeStandardSignature } from './providers/standard.js';
 import { computeSlackSignature } from './providers/slack.js';
+import { computePaddleSignature } from './providers/paddle.js';
+import { computeResendSignature } from './providers/resend.js';
 import type { SignedPayload } from './types.js';
 
 /**
@@ -54,11 +56,19 @@ export function skew(
   const isStripe =
     payload.provider === 'stripe' || 'stripe-signature' in newHeaders;
   const isStandard =
-    payload.provider === 'standard' || 'webhook-signature' in newHeaders;
+    payload.provider === 'standard' ||
+    payload.provider === 'svix' ||
+    'webhook-signature' in newHeaders;
   const isSlack =
     payload.provider === 'slack' ||
     'x-slack-signature' in newHeaders ||
     'X-Slack-Signature' in newHeaders;
+  const isPaddle =
+    payload.provider === 'paddle' ||
+    'paddle-signature' in newHeaders ||
+    'Paddle-Signature' in newHeaders;
+  const isResend =
+    payload.provider === 'resend' || 'svix-signature' in newHeaders;
 
   if (isStripe) {
     newHeaders['stripe-signature'] = computeStripeSignature(
@@ -92,6 +102,25 @@ export function skew(
         : 'x-slack-request-timestamp';
     newHeaders[keySig] = sig;
     newHeaders[keyTs] = String(staleTimestamp);
+  } else if (isPaddle) {
+    const sig = computePaddleSignature(
+      payload.secret,
+      staleTimestamp,
+      payload.rawBody
+    );
+    const key =
+      'Paddle-Signature' in newHeaders ? 'Paddle-Signature' : 'paddle-signature';
+    newHeaders[key] = sig;
+  } else if (isResend) {
+    const id = payload.id || newHeaders['svix-id'] || 'msg_skew';
+    newHeaders['svix-signature'] = computeResendSignature(
+      id,
+      staleTimestamp,
+      payload.rawBody,
+      payload.secret
+    );
+    newHeaders['svix-timestamp'] = String(staleTimestamp);
+    newHeaders['svix-id'] = id;
   }
 
   return {

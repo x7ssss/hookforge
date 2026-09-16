@@ -12,6 +12,12 @@ import {
   SHOPIFY_DEFAULT_EVENT,
   SLACK_DEFAULT_SECRET,
   SLACK_DEFAULT_EVENT,
+  PADDLE_DEFAULT_SECRET,
+  PADDLE_DEFAULT_EVENT,
+  RESEND_DEFAULT_SECRET,
+  RESEND_DEFAULT_EVENT,
+  TWILIO_DEFAULT_SECRET,
+  TWILIO_DEFAULT_EVENT,
   verify,
 } from '../src/index.js';
 
@@ -317,6 +323,195 @@ describe('Webhook Signing - src/sign.ts', () => {
 
       expect(signed.headers['X-Slack-Signature']).toBe(`v0=${expectedHex}`);
       expect(signed.headers['X-Slack-Request-Timestamp']).toBe(String(customTimestamp));
+      expect(verify(signed)).toBe(true);
+    });
+  });
+
+  describe('Paddle Provider', () => {
+    it('signs default subscription.created event with ts={unix};h1={hmac_sha256}', () => {
+      const signed = sign('paddle');
+
+      expect(signed.provider).toBe('paddle');
+      expect(signed.event).toBe(PADDLE_DEFAULT_EVENT);
+      expect(signed.secret).toBe(PADDLE_DEFAULT_SECRET);
+      expect(Buffer.isBuffer(signed.rawBody)).toBe(true);
+
+      const sigHeader = signed.headers['Paddle-Signature'];
+      expect(sigHeader).toBeDefined();
+      expect(signed.headers['content-type']).toBe('application/json');
+
+      const match = sigHeader.match(/^ts=(\d+);h1=([a-f0-9]{64})$/);
+      expect(match).not.toBeNull();
+      const ts = parseInt(match![1], 10);
+      const hex = match![2];
+
+      expect(ts).toBe(signed.timestamp);
+
+      // Independent verification: ${ts}:${rawBody}
+      const baseString = `${signed.timestamp}:${signed.rawBody.toString('utf8')}`;
+      const expectedHex = createHmac('sha256', signed.secret)
+        .update(baseString)
+        .digest('hex');
+
+      expect(hex).toBe(expectedHex);
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs transaction.completed event with realistic fixture', () => {
+      const signed = sign('paddle', { event: 'transaction.completed' });
+
+      expect(signed.event).toBe('transaction.completed');
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.event_type).toBe('transaction.completed');
+      expect(body.data.status).toBe('completed');
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs custom payload and secret accurately for paddle', () => {
+      const customPayload = { event_type: 'custom.event', test: 123 };
+      const customSecret = 'pdl_custom_secret_key';
+
+      const signed = sign('paddle', {
+        event: 'custom.event',
+        secret: customSecret,
+        payload: customPayload,
+      });
+
+      expect(signed.secret).toBe(customSecret);
+      expect(verify(signed)).toBe(true);
+    });
+  });
+
+  describe('Resend Provider (Svix standard)', () => {
+    it('signs default email.sent event with svix-* headers and v1,{hash}', () => {
+      const signed = sign('resend');
+
+      expect(signed.provider).toBe('resend');
+      expect(signed.event).toBe(RESEND_DEFAULT_EVENT);
+      expect(signed.secret).toBe(RESEND_DEFAULT_SECRET);
+      expect(Buffer.isBuffer(signed.rawBody)).toBe(true);
+
+      const id = signed.headers['svix-id'];
+      const timestamp = signed.headers['svix-timestamp'];
+      const signature = signed.headers['svix-signature'];
+
+      expect(id).toBeDefined();
+      expect(timestamp).toBe(String(signed.timestamp));
+      expect(signature).toBeDefined();
+      expect(signature.startsWith('v1,')).toBe(true);
+
+      const base64Sig = signature.slice('v1,'.length);
+
+      // Independent verification: ${id}.${timestamp}.${rawBody} using HMAC-SHA256
+      const baseString = `${id}.${timestamp}.${signed.rawBody.toString('utf8')}`;
+      const expectedBase64 = createHmac('sha256', signed.secret)
+        .update(baseString)
+        .digest('base64');
+
+      expect(base64Sig).toBe(expectedBase64);
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs email.delivered and email.bounced events with realistic fixtures', () => {
+      const delivered = sign('resend', { event: 'email.delivered' });
+      expect(delivered.event).toBe('email.delivered');
+      const delBody = JSON.parse(delivered.rawBody.toString('utf8'));
+      expect(delBody.type).toBe('email.delivered');
+      expect(verify(delivered)).toBe(true);
+
+      const bounced = sign('resend', { event: 'email.bounced' });
+      expect(bounced.event).toBe('email.bounced');
+      const bncBody = JSON.parse(bounced.rawBody.toString('utf8'));
+      expect(bncBody.type).toBe('email.bounced');
+      expect(bncBody.data.bounce.type).toBe('permanent');
+      expect(verify(bounced)).toBe(true);
+    });
+
+    it('signs with custom ID and secret for resend', () => {
+      const customId = 'msg_resend_custom_1';
+      const customSecret = 'whsec_custom_resend_secret';
+      const signed = sign('resend', {
+        id: customId,
+        secret: customSecret,
+        payload: { test: true },
+      });
+
+      expect(signed.headers['svix-id']).toBe(customId);
+      expect(verify(signed)).toBe(true);
+    });
+  });
+
+  describe('Twilio Provider', () => {
+    it('signs default message.received event with X-Twilio-Signature HMAC-SHA1', () => {
+      const signed = sign('twilio');
+
+      expect(signed.provider).toBe('twilio');
+      expect(signed.event).toBe(TWILIO_DEFAULT_EVENT);
+      expect(signed.secret).toBe(TWILIO_DEFAULT_SECRET);
+      expect(Buffer.isBuffer(signed.rawBody)).toBe(true);
+
+      const sigHeader = signed.headers['X-Twilio-Signature'];
+      expect(sigHeader).toBeDefined();
+
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.MessageSid).toBeDefined();
+
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs call.completed event with realistic fixture', () => {
+      const signed = sign('twilio', { event: 'call.completed' });
+
+      expect(signed.event).toBe('call.completed');
+      const body = JSON.parse(signed.rawBody.toString('utf8'));
+      expect(body.CallSid).toBeDefined();
+      expect(body.CallStatus).toBe('completed');
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs with sorted form-urlencoded parameters', () => {
+      const formBody = 'From=%2B15017122661&To=%2B15558675310&Body=Hello';
+      const targetUrl = 'http://localhost:3000/api/webhooks';
+      const secret = 'custom_twilio_token';
+
+      const signed = sign('twilio', {
+        payload: formBody,
+        targetUrl,
+        secret,
+      });
+
+      expect(signed.headers['X-Twilio-Signature']).toBeDefined();
+      // Sorted keys: Body (Hello), From (+15017122661), To (+15558675310)
+      const expectedString = `${targetUrl}BodyHelloFrom+15017122661To+15558675310`;
+      const expectedSig = createHmac('sha1', secret)
+        .update(expectedString)
+        .digest('base64');
+
+      expect(signed.headers['X-Twilio-Signature']).toBe(expectedSig);
+      expect(verify(signed)).toBe(true);
+    });
+
+    it('signs with sorted JSON body keys', () => {
+      const jsonBody = {
+        Z_param: 'last',
+        A_param: 'first',
+        M_param: 'middle',
+      };
+      const targetUrl = 'http://127.0.0.1:4000/webhook';
+      const secret = 'twilio_token_123';
+
+      const signed = sign('twilio', {
+        payload: jsonBody,
+        targetUrl,
+        secret,
+      });
+
+      const expectedString = `${targetUrl}A_paramfirstM_parammiddleZ_paramlast`;
+      const expectedSig = createHmac('sha1', secret)
+        .update(expectedString)
+        .digest('base64');
+
+      expect(signed.headers['X-Twilio-Signature']).toBe(expectedSig);
       expect(verify(signed)).toBe(true);
     });
   });

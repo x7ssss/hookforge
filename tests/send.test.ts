@@ -114,4 +114,66 @@ describe('Send Engine - src/send.ts', () => {
     );
     expect(lastReceived!.body.equals(signed.rawBody)).toBe(true);
   });
+
+  it('POSTs Paddle webhook with accurate Paddle-Signature and Content-Length', async () => {
+    const signed = sign('paddle');
+    const url = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const res = await send(signed, url);
+    expect(res.status).toBe(200);
+    expect(lastReceived!.headers['paddle-signature']).toBe(
+      signed.headers['Paddle-Signature']
+    );
+    expect(lastReceived!.headers['content-length']).toBe(
+      String(signed.rawBody.byteLength)
+    );
+    expect(lastReceived!.body.equals(signed.rawBody)).toBe(true);
+  });
+
+  it('POSTs Resend webhook with accurate svix-* headers', async () => {
+    const signed = sign('resend');
+    const url = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const res = await send(signed, url);
+    expect(res.status).toBe(200);
+    expect(lastReceived!.headers['svix-signature']).toBe(
+      signed.headers['svix-signature']
+    );
+    expect(lastReceived!.headers['svix-id']).toBe(signed.headers['svix-id']);
+    expect(lastReceived!.headers['svix-timestamp']).toBe(
+      signed.headers['svix-timestamp']
+    );
+    expect(lastReceived!.body.equals(signed.rawBody)).toBe(true);
+  });
+
+  it('POSTs Twilio webhook with X-Twilio-Signature', async () => {
+    const targetUrl = `http://127.0.0.1:${serverPort}/webhook`;
+    const signed = sign('twilio', { targetUrl });
+
+    const res = await send(signed, targetUrl);
+    expect(res.status).toBe(200);
+    expect(lastReceived!.headers['x-twilio-signature']).toBe(
+      signed.headers['X-Twilio-Signature']
+    );
+    expect(lastReceived!.body.equals(signed.rawBody)).toBe(true);
+  });
+
+  it('merges custom headers via send options', async () => {
+    const signed = sign('stripe');
+    const url = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const res = await send(signed, url, {
+      headers: {
+        'X-Trace-Id': 'trace_12345',
+        Authorization: 'Bearer test_key',
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(lastReceived!.headers['x-trace-id']).toBe('trace_12345');
+    expect(lastReceived!.headers['authorization']).toBe('Bearer test_key');
+    expect(lastReceived!.headers['stripe-signature']).toBe(
+      signed.headers['stripe-signature']
+    );
+  });
 });

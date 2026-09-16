@@ -51,7 +51,7 @@ Testing webhook handlers in local development is traditionally painful and fragi
 | :--- | :--- | :--- | :--- |
 | **Network Requirement** | **100% Offline** (localhost only) | Requires active internet connection | Requires active internet connection |
 | **Third-Party Accounts** | **Zero accounts**, zero API keys | Requires dashboard login & token | Requires ngrok account & auth token |
-| **Multi-Provider** | **Unified** (Stripe, GitHub, Slack, Shopify, Standard) | Fragmented (separate CLI per vendor) | Agnostic tunnel (does not generate webhooks) |
+| **Multi-Provider** | **Unified** (Stripe, GitHub, Shopify, Slack, Paddle, Resend, Twilio, Svix) | Fragmented (separate CLI per vendor) | Agnostic tunnel (does not generate webhooks) |
 | **Signature Verification Testing** | **Native** (recreates exact HMAC signatures) | Generates valid signatures only | Passes cloud signatures through tunnel |
 | **Chaos & Attack Simulation** | **Built-in** (`--tamper`, `--replay`, `--skew`) | **None** (cannot send malformed traffic) | **None** (cannot simulate attacks) |
 | **CI / Automated Test Suitability** | **Instant** (`npm install`, runs in headless CI) | Complex (requires mock services / secrets) | Poor (requires tunnels and public listeners) |
@@ -62,13 +62,65 @@ Testing webhook handlers in local development is traditionally painful and fragi
 
 ## Installation & Quickstart
 
-### 1. Direct Runner (No Installation Required)
+### 1. Interactive Zero-Arg Wizard
+
+Simply run `hookforge` with no arguments in any interactive terminal to launch the zero-configuration interactive wizard powered by Node.js built-in `readline`:
+
+```bash
+hookforge
+# or via npx
+npx hookforge-cli
+```
+
+```text
+hookforge - Interactive Webhook Wizard
+
+Select Provider:
+  1) stripe
+  2) github
+  3) shopify
+  4) svix
+  5) slack
+  6) paddle
+  7) resend
+  8) twilio
+
+Enter provider [1-8 or name] (default: stripe): 6
+
+Select Event for paddle:
+  1) subscription.created
+  2) transaction.completed
+
+Enter event [1-2 or custom] (default: subscription.created): 1
+
+Target URL (default: http://localhost:3000/api/webhooks): 
+Secret key (optional, default: pdl_ntfset_test): 
+Tamper test? (y/N): n
+
+[2026-09-16T10:00:00.000Z] PADDLE subscription.created
+  Target:       http://localhost:3000/api/webhooks
+  Payload Size: 620 bytes
+  HTTP Status:  200 OK
+```
+
+---
+
+### 2. Direct CLI Runner (No Installation Required)
 
 Fire authentic, cryptographically signed webhook payloads at your local server using `npx`:
 
 ```bash
 # Send a valid Stripe payment_intent.succeeded event
 npx hookforge-cli stripe payment_intent.succeeded --to http://localhost:3000/api/webhooks
+
+# Send a Paddle subscription.created webhook
+npx hookforge-cli paddle subscription.created --to http://localhost:3000/api/webhooks
+
+# Send a Resend email.delivered webhook (Svix standard)
+npx hookforge-cli resend email.delivered --to http://localhost:3000/api/webhooks
+
+# Send a Twilio message.received webhook
+npx hookforge-cli twilio message.received --to http://localhost:3000/api/webhooks
 
 # Send a Shopify orders/create webhook
 npx hookforge-cli shopify orders/create --to http://localhost:3000/api/webhooks
@@ -83,7 +135,7 @@ npx hookforge-cli standard user.created --to http://localhost:3000/api/webhooks 
 npx hookforge-cli github push --to http://localhost:3000/api/webhooks --replay
 ```
 
-### 2. Global Installation
+### 3. Global Installation
 
 Install globally to use the convenient `hookforge` alias directly anywhere in your terminal:
 
@@ -101,8 +153,48 @@ hookforge stripe payment_intent.succeeded --to http://localhost:3000/api/webhook
 hookforge-cli shopify orders/create --to http://localhost:3000/api/webhooks
 ```
 
-### 3. Piping Payloads via Stdin
+---
 
+### 4. Custom Payloads & Custom Headers
+
+`hookforge` guarantees strict byte-for-byte cryptographic integrity: signatures are always calculated against the exact resolved payload bytes (custom or template) without JSON formatting, key sorting alterations, or whitespace normalization.
+
+#### Inline Raw JSON (`--data` / `-d`)
+Pass an inline raw JSON string directly on the command line:
+
+```bash
+hookforge stripe customer.subscription.deleted \
+  --to http://localhost:3000/api/webhooks \
+  -d '{"id": "sub_custom_123", "status": "canceled"}'
+```
+
+#### Custom Payload Files (`--file` / `-f`)
+Load payload bytes from a relative or absolute JSON file:
+
+```bash
+# Relative file path
+hookforge paddle subscription.created \
+  --to http://localhost:3000/api/webhooks \
+  -f ./payloads/paddle-event.json
+
+# Absolute file path
+hookforge github push \
+  --to http://localhost:3000/api/webhooks \
+  --file /var/data/custom-push.json
+```
+
+#### Multiple Custom HTTP Headers (`--header` / `-H`)
+Provide one or more custom HTTP headers (e.g. for authentication, routing, or environment flags):
+
+```bash
+hookforge twilio message.received \
+  --to http://localhost:3000/api/webhooks \
+  -H "Authorization: Bearer test_api_token" \
+  -H "X-Source: local-integration-test" \
+  -H "X-Environment: development"
+```
+
+#### Piping via Stdin
 Pipe custom JSON payloads directly from files or other CLI utilities:
 
 ```bash
@@ -123,18 +215,22 @@ Both `hookforge` and `hookforge-cli` accept identical syntax and options:
 hookforge <provider> <event> --to <target_url> [options]
 # or
 npx hookforge-cli <provider> <event> --to <target_url> [options]
+# or interactive zero-arg wizard:
+hookforge
 
 ARGUMENTS:
-  <provider>            Provider name (stripe | github | standard | shopify | slack)
-  <event>               Event name (e.g. payment_intent.succeeded, push, user.created, orders/create, app_mention)
+  <provider>            Provider name (stripe | github | shopify | svix | standard | slack | paddle | resend | twilio)
+  <event>               Event name (e.g. payment_intent.succeeded, push, orders/create, subscription.created, email.sent, message.received)
 
 OPTIONS:
-  --to <url>            Target URL to send webhook to (required)
+  --to <url>            Target URL to send webhook to (required in non-interactive mode)
   --secret <str>        Secret used to sign the webhook (default: provider default)
   --tamper              Mutate 1 byte in payload body to test signature rejection
   --replay              Send webhook then replay identical payload and headers
   --skew <seconds>      Recalculate signature with a stale timestamp (seconds ago)
-  --data <json>         Custom JSON string payload (or '-' to read from stdin)
+  -d, --data <json>     Custom JSON string payload (or '-' to read from stdin)
+  -f, --file <path>     Path to custom JSON payload file (relative or absolute)
+  -H, --header <str>    Custom HTTP header (can be repeated, e.g. -H "X-Custom: 123")
   -h, --help            Show help message
   -v, --version         Show version
 ```
@@ -229,9 +325,12 @@ const isTamperedValid = verify(tampered); // false
 | :--- | :--- | :--- | :--- |
 | **Stripe** | `stripe-signature` | HMAC-SHA256 hex (`t=${t},v1=${hex}`) over `${t}.${body}` | Stripe Payments, Billing, Connect |
 | **GitHub** | `x-hub-signature-256` | HMAC-SHA256 hex (`sha256=${hex}`) over raw body bytes | GitHub Apps, Webhooks, Actions |
-| **Standard Webhooks** | `webhook-signature` | HMAC-SHA256 base64 (`v1,${base64}`) over `${id}.${t}.${body}` | Svix, Clerk, Resend, Linear, Supabase |
+| **Standard / Svix** | `webhook-signature` | HMAC-SHA256 base64 (`v1,${base64}`) over `${id}.${t}.${body}` | Svix, Clerk, Linear, Supabase |
 | **Shopify** | `X-Shopify-Hmac-Sha256` | HMAC-SHA256 base64 digest over raw payload body | Shopify Apps, Checkout, Orders |
 | **Slack** | `X-Slack-Signature` | HMAC-SHA256 hex (`v0=${hex}`) over `v0:${timestamp}:${body}` | Slack Apps, Bolt, Events API |
+| **Paddle** | `Paddle-Signature` | HMAC-SHA256 hex (`ts=${ts};h1=${hex}`) over `${ts}:${body}` | Paddle Billing, Subscriptions, Checkout |
+| **Resend** | `svix-signature` | HMAC-SHA256 base64 (`v1,${base64}`) over `${id}.${timestamp}.${body}` | Resend Transactional Email (Svix Standard) |
+| **Twilio** | `X-Twilio-Signature` | HMAC-SHA1 base64 digest over `${targetUrl}${sortedFormOrBodyParams}` | Twilio SMS, Voice, Messaging Webhooks |
 
 ---
 

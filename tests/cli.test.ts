@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { Readable, Writable, PassThrough } from 'node:stream';
 import { runCli, readStdin } from '../src/cli.js';
+import { verify, STRIPE_DEFAULT_SECRET } from '../src/index.js';
 
 describe('CLI - src/cli.ts', () => {
   let server: Server;
@@ -179,5 +183,226 @@ describe('CLI - src/cli.ts', () => {
     expect(code).toBe(0);
     expect(receivedRequests.length).toBe(1);
     expect(receivedRequests[0].body).toBe(pipedData);
+  });
+
+  it('sends custom inline json payload via -d short flag with exact signature bytes', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+    const customJson = '{\n  "custom_field":   "unformatted_spacing",\n  "num": 42\n}';
+
+    const code = await runCli([
+      'stripe',
+      'payment_intent.succeeded',
+      '--to',
+      target,
+      '-d',
+      customJson,
+    ]);
+
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].body).toBe(customJson);
+
+    // Cryptographic verification must succeed on the EXACT received bytes
+    const req = receivedRequests[0];
+    const verified = verify({
+      headers: req.headers as Record<string, string>,
+      rawBody: Buffer.from(req.body, 'utf8'),
+      secret: STRIPE_DEFAULT_SECRET,
+      provider: 'stripe',
+    });
+    expect(verified).toBe(true);
+  });
+
+  it('reads custom JSON payload from file using --file and -f flags', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+    const tempFile = join(process.cwd(), 'temp-test-payload.json');
+    const fileContent = JSON.stringify({ from_file: true, order_id: 'ord_9876' });
+    writeFileSync(tempFile, fileContent, 'utf8');
+
+    try {
+      // Test relative path via -f
+      const codeRel = await runCli([
+        'stripe',
+        'payment_intent.succeeded',
+        '--to',
+        target,
+        '-f',
+        'temp-test-payload.json',
+      ]);
+      expect(codeRel).toBe(0);
+      expect(receivedRequests.length).toBe(1);
+      expect(receivedRequests[0].body).toBe(fileContent);
+
+      // Test absolute path via --file
+      receivedRequests.length = 0;
+      const codeAbs = await runCli([
+        'stripe',
+        'payment_intent.succeeded',
+        '--to',
+        target,
+        '--file',
+        tempFile,
+      ]);
+      expect(codeAbs).toBe(0);
+      expect(receivedRequests.length).toBe(1);
+      expect(receivedRequests[0].body).toBe(fileContent);
+    } finally {
+      try {
+        unlinkSync(tempFile);
+      } catch {}
+    }
+  });
+
+  it('exits with 1 when payload file does not exist', async () => {
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+    const code = await runCli([
+      'stripe',
+      'payment_intent.succeeded',
+      '--to',
+      target,
+      '--file',
+      'non-existent-payload-file.json',
+    ]);
+    expect(code).toBe(1);
+  });
+
+  it('supports multiple custom headers using -H and --header', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const code = await runCli([
+      'github',
+      'push',
+      '--to',
+      target,
+      '-H',
+      'Authorization: Bearer test-secret-token',
+      '--header',
+      'X-Custom-Env: staging',
+      '-H',
+      'X-Request-Id: req_xyz_123',
+    ]);
+
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    const headers = receivedRequests[0].headers;
+    expect(headers['authorization']).toBe('Bearer test-secret-token');
+    expect(headers['x-custom-env']).toBe('staging');
+    expect(headers['x-request-id']).toBe('req_xyz_123');
+    expect(headers['x-hub-signature-256']).toBeDefined();
+  });
+
+  it('sends paddle subscription.created webhook via CLI', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const code = await runCli(['paddle', 'subscription.created', '--to', target]);
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].headers['paddle-signature']).toBeDefined();
+  });
+
+  it('sends resend email.sent webhook via CLI', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const code = await runCli(['resend', 'email.sent', '--to', target]);
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].headers['svix-signature']).toBeDefined();
+    expect(receivedRequests[0].headers['svix-id']).toBeDefined();
+    expect(receivedRequests[0].headers['svix-timestamp']).toBeDefined();
+  });
+
+  it('sends twilio message.received webhook via CLI', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    const code = await runCli(['twilio', 'message.received', '--to', target]);
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].headers['x-twilio-signature']).toBeDefined();
+  });
+
+  it('runs interactive terminal wizard when invoked with no CLI arguments', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    // Responses for interactive wizard:
+    // 1. Select provider: paddle
+    // 2. Select event: 1 (subscription.created)
+    // 3. Target URL: target
+    // 4. Secret: empty string (default)
+    // 5. Tamper: n
+    const answers = ['paddle', '1', target, '', 'n'];
+    let answerIdx = 0;
+
+    const stdinStream = new PassThrough();
+    const stdoutChunks: string[] = [];
+    const stdoutStream = new Writable({
+      write(chunk, encoding, callback) {
+        const text = chunk.toString();
+        stdoutChunks.push(text);
+        if (text.includes(': ') && answerIdx < answers.length) {
+          const ans = answers[answerIdx++];
+          setTimeout(() => stdinStream.write(ans + '\n'), 5);
+        }
+        callback();
+      },
+    });
+
+    const code = await runCli([], {
+      isTTY: true,
+      stdin: stdinStream,
+      stdout: stdoutStream,
+    });
+
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].headers['paddle-signature']).toBeDefined();
+    const stdoutText = stdoutChunks.join('');
+    expect(stdoutText).toContain('PADDLE');
+    expect(stdoutText).toContain('subscription.created');
+  });
+
+  it('runs interactive terminal wizard with tamper enabled', async () => {
+    receivedRequests.length = 0;
+    const target = `http://127.0.0.1:${serverPort}/webhook`;
+
+    // 1. Select provider: 1 (stripe)
+    // 2. Select event: 1 (payment_intent.succeeded)
+    // 3. Target URL: target
+    // 4. Secret: empty string (default)
+    // 5. Tamper: y
+    const answers = ['1', '1', target, '', 'y'];
+    let answerIdx = 0;
+
+    const stdinStream = new PassThrough();
+    const stdoutChunks: string[] = [];
+    const stdoutStream = new Writable({
+      write(chunk, encoding, callback) {
+        const text = chunk.toString();
+        stdoutChunks.push(text);
+        if (text.includes(': ') && answerIdx < answers.length) {
+          const ans = answers[answerIdx++];
+          setTimeout(() => stdinStream.write(ans + '\n'), 5);
+        }
+        callback();
+      },
+    });
+
+    const code = await runCli([], {
+      isTTY: true,
+      stdin: stdinStream,
+      stdout: stdoutStream,
+    });
+
+    expect(code).toBe(0);
+    expect(receivedRequests.length).toBe(1);
+    expect(receivedRequests[0].headers['stripe-signature']).toBeDefined();
+    const stdoutText = stdoutChunks.join('');
+    expect(stdoutText).toContain('[TAMPERED]');
   });
 });
